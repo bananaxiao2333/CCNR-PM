@@ -1,0 +1,108 @@
+plugins {
+    id 'eclipse'
+    id 'idea'
+    id 'maven-publish'
+    id 'net.minecraftforge.gradle' version '[6.0,6.2)'
+    id 'com.diffplug.spotless' version '6.25.0'
+}
+
+version = mod_version
+group = mod_group_id
+
+base {
+    archivesName = mod_id
+}
+
+// 本机使用 brew JDK 21；通过 --release 17 保证产出 Java 17 兼容字节码
+java.toolchain.languageVersion = JavaLanguageVersion.of(21)
+
+minecraft {
+    mappings channel: mapping_channel, version: mapping_version
+    copyIdeResources = true
+
+    runs {
+        client {
+            workingDirectory project.file('run')
+            property 'forge.logging.markers', 'REGISTRIES'
+            property 'forge.logging.console.level', 'debug'
+            mods {
+                "${mod_id}" {
+                    source sourceSets.main
+                }
+            }
+        }
+        server {
+            workingDirectory project.file('run')
+            property 'forge.logging.markers', 'REGISTRIES'
+            property 'forge.logging.console.level', 'debug'
+            mods {
+                "${mod_id}" {
+                    source sourceSets.main
+                }
+            }
+        }
+    }
+}
+
+repositories {
+    // 国内镜像：maven central
+    maven { url = uri('https://maven.aliyun.com/repository/public') }
+    mavenCentral()
+}
+
+dependencies {
+    minecraft "net.minecraftforge:forge:${minecraft_version}-${forge_version}"
+
+    // ---- 工单持久化：SQLite 默认（内嵌，打进 mod jar），MySQL 可选（网络后端）----
+    implementation 'org.xerial:sqlite-jdbc:3.45.3.0'
+    implementation 'com.mysql:mysql-connector-j:8.3.0'
+    // 打包进 mod jar（jarJar）以便单文件部署
+    jarJar('org.xerial:sqlite-jdbc:3.45.3.0') {
+        jarJar.ranged(it, '[3.45.3.0,)')
+    }
+
+    // ---- 测试（JUnit5；离线开发环境不自动跑，显式 `-PrunTests` 才执行）----
+    testImplementation platform('org.junit:junit-bom:5.11.4')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+}
+
+jar {
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+
+    manifest {
+        attributes([
+                'Specification-Title'     : mod_id,
+                'Specification-Vendor'    : mod_group_id,
+                'Specification-Version'   : '1',
+                'Implementation-Title'    : project.name,
+                'Implementation-Version'  : project.version,
+                'Implementation-Vendor'   : mod_group_id,
+                'Implementation-Timestamp': new Date().format("yyyy-MM-dd'T'HH:mm:ssZ")
+        ])
+    }
+}
+
+jar.finalizedBy('reobfJar')
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.release = 17
+    // 语法/类型检查增强（警告不阻断构建；配合 CI 门禁使用）
+    options.compilerArgs += ['-Xlint:all']
+}
+
+tasks.withType(Test).configureEach {
+    useJUnitPlatform()
+    onlyIf { project.hasProperty('runTests') }
+}
+
+// ---- 代码风格（spotless：palantirJavaFormat + license 头）----
+spotless {
+    java {
+        target 'src/main/java/**/*.java', 'src/test/java/**/*.java'
+        palantirJavaFormat()
+        licenseHeaderFile 'config/spotless/license-header.txt'
+        trimTrailingWhitespace()
+        endWithNewline()
+    }
+}

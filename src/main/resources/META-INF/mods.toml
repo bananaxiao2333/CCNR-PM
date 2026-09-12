@@ -1,0 +1,41 @@
+modLoader="javafml"
+loaderVersion="[47,)"
+license="MIT"
+
+[[mods]]
+modId="ccnr_pm"
+version="${file.jarVersion}"
+displayName="CCNR-PM"
+authors="CCNR"
+logoFile="icon.png"
+description='''CCNR 玩家管理模组（Forge 1.20.1）
+
+面向服务器的玩家管理面板：举报工单、在线玩家检索与处置记录。
+首个功能为「玩家举报工单」——玩家执行管理通讯命令 /a <消息> 时不再被拒绝，
+而是弹出工单面板：预填消息内容、选择在线玩家、选择举报类别、填写详细描述后提交建单，
+由服务端重新校验并持久化（SQLite / JSON 双后端）。
+
+与 CCNR-RP、CCNR-Com 相互独立，可单独安装。'''
+
+[[dependencies.ccnr_pm]]
+    modId="forge"
+    mandatory=true
+    versionRange="[47,)"
+    ordering="NONE"
+    side="BOTH"
+
+[[dependencies.ccnr_pm]]
+    modId="minecraft"
+    mandatory=true
+    versionRange="[1.20.1,1.21)"
+    ordering="NONE"
+    side="BOTH"
+
+# CCNR-Com 为**可选**依赖：安装时本模组接管其 /a 与 /admin 命令的权限回绝路径。
+# 未安装时 /a 仍可用（仅举报面板），管理员侧管理通讯不可用。
+[[dependencies.ccnr_pm]]
+    modId="ccnrcom"
+    mandatory=false
+    versionRange="[1.0.0,)"
+    ordering="AFTER"
+    side="BOTH"
