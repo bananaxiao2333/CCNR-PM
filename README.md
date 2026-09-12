@@ -1,9 +1,21 @@
-# CCNR-PM
+<div align="center">
 
-> CCNR 服务器**玩家管理模组**（Minecraft Forge 1.20.1）。
-> 第一个功能：**玩家举报工单** —— 玩家执行管理员消息命令 `/a <消息>` 时不再被回绝，而是直接弹出工单面板。
+<img src="src/main/resources/icon.png" width="128" height="128" alt="CCNR-PM 图标">
 
-**当前版本：`0.13.0`**（开发期；版本号规范见 [docs/04-版本号规范.md](docs/04-版本号规范.md)）
+# CCNR-PM 玩家管理模组（Forge 1.20.1）
+
+CCNR 服务器**玩家管理模组**。第一个功能：**玩家举报工单** —— 玩家执行管理员消息命令
+`/a <消息>` 时不再被回绝，而是直接弹出工单面板。
+
+[![Release](https://img.shields.io/github/v/release/bananaxiao2333/CCNR-PM?label=Release&color=brightgreen)](https://github.com/bananaxiao2333/CCNR-PM/releases)
+[![Build](https://img.shields.io/github/actions/workflow/status/bananaxiao2333/CCNR-PM/build.yml?branch=main&label=Build)](https://github.com/bananaxiao2333/CCNR-PM/actions)
+[![License](https://img.shields.io/github/license/bananaxiao2333/CCNR-PM?label=License)](LICENSE)
+[![Minecraft](https://img.shields.io/badge/Minecraft-1.20.1-important)](https://www.minecraft.net)
+[![Forge](https://img.shields.io/badge/Forge-47.2.0%2B-orange)](https://files.minecraftforge.net)
+
+</div>
+
+**当前版本：`0.13.1`**（开发期；版本号规范见 [docs/04-版本号规范.md](docs/04-版本号规范.md)）
 
 ---
 
@@ -207,22 +219,54 @@ CCNR-Com 用 Brigadier 的 `.requires(Permissions::canAdmin)` 注册 `/a`，普�
 
 ---
 
-## 开发
+## 构建
+
+```bash
+./gradlew build            # 语法(-Xlint:all) + 风格(spotlessCheck) 门禁，产出 build/libs/*.jar
+./gradlew spotlessApply    # 唯一格式化入口（提交前必跑）
+./gradlew test -PrunTests   # 单元测试（默认不跑，必须显式加 -PrunTests）
+```
+
+产物两种，按是否需要数据库选择：
+
+| 产物 | 内容 | 用途 |
+| --- | --- | --- |
+| `build/libs/ccnr_pm-<版本>.jar` | 纯 mod | 默认 JSON 文件后端 |
+| `build/libs/ccnr_pm-<版本>-all.jar` | **含内嵌 SQLite 驱动** | 要用 SQLite / MySQL 就发这个 |
+
+## 持续集成
+
+[`.github/workflows/build.yml`](.github/workflows/build.yml)：push / PR 到 `main` 时跑
+`./gradlew build`（含 `spotlessCheck`）与 `./gradlew test -PrunTests`，并上传 jar 产物；
+打 tag 时自动把 jar 附到 GitHub Release。**门禁不过就不合并**——版本号漂移（`VersionConsistencyTest`）、
+语言包漏翻（`LangFileTest`）、接线缺失（`EventWiringTest`）都由 CI 拦。
+
+## 技术栈
+
+| 项 | 版本 |
+| --- | --- |
+| Minecraft | 1.20.1 |
+| Forge | 47.2.0+ |
+| Java | 17 字节码 / JDK 21 构建 |
+| Gradle | 8.5 |
+| SQLite 驱动 | 内嵌于 `-all.jar`（`META-INF/jarjar/`） |
+
+无外部模组硬依赖：CCNR-Com 为可选（提供 `/a` 命令），CCNR-RP 为可选（角色选择与刷出联动，
+一律反射 + 降级）。
+
+---
+
+## 开发环境
 
 ```bash
 export JAVA_HOME=/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home
-export GRADLE_USER_HOME=/Users/bananaxiao/Documents/MirageV/mod/CCNR-Com/.gradle-home   # 共享 2GB 缓存
+export GRADLE_USER_HOME=/Users/bananaxiao/Documents/MirageV/mod/CCNR-Com/.gradle-home   # 共享缓存
 
-./gradlew build              # 语法(-Xlint:all) + 风格(spotlessCheck) 门禁，产出 build/libs/*.jar
-./gradlew spotlessApply      # 唯一格式化入口（提交前必跑）
-./gradlew test -PrunTests    # 单元测试（默认不跑，必须显式加 -PrunTests）
-./gradlew runServer          # 开发环境服务端
-./gradlew runClient          # 开发环境客户端
+./gradlew runServer    # 开发环境服务端
+./gradlew runClient    # 开发环境客户端
 ```
 
-产物：
-- `build/libs/ccnr_pm-<版本>.jar` —— 纯 mod（依赖外部 SQLite 驱动时用；默认走 JSON 文件后端）
-- `build/libs/ccnr_pm-<版本>-all.jar` —— **含内嵌 SQLite 驱动**，要用数据库就发这个
+构建命令与产物见下方[构建](#构建)。
 
 ---
 
@@ -236,6 +280,6 @@ export GRADLE_USER_HOME=/Users/bananaxiao/Documents/MirageV/mod/CCNR-Com/.gradle
 
 三个仓库各自独立，本模组的任何改动都不需要改另外两个。
 
-## 许可
+## License
 
-MIT，见 [LICENSE](LICENSE)。
+MIT —— 见 [LICENSE](LICENSE)。

@@ -27,6 +27,7 @@ export GRADLE_USER_HOME=/Users/bananaxiao/Documents/MirageV/mod/CCNR-Com/.gradle
 ## 版本号（规范全文见 docs/04）
 
 - 格式 `<主版本>.<功能批次>.<修订号>`；**唯一真源**是 `gradle.properties` 的 `mod_version`。
+  编号规则与 **CHANGELOG 标题写法均以 CCNR-RP 为准**（`## <版本>（<摘要>）`，全角括号、不带方括号）。
 - 交付一次改动 → 判断是「批次」还是「修订」→ bump → `CHANGELOG.md` 顶部补条目 → README「当前版本」同步。
 - `mods.toml` 用 `${file.jarVersion}` 注入，**不要**手写第二个版本号。
 - 门禁：`VersionConsistencyTest` 会拦住三处不同步；版本号**不参与任何逻辑判断**。

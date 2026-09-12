@@ -1,0 +1,50 @@
+name: build
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: gradle
+
+      - name: Build with Gradle (incl. spotlessCheck)
+        run: ./gradlew build --no-daemon
+
+      # 测试默认被 onlyIf -PrunTests 跳过，必须显式带上，否则 CI 会在「没有任何测试」的情况下变绿。
+      # 本仓库的门禁（VersionConsistencyTest / LangFileTest / EventWiringTest）都在这条命令里。
+      - name: Run unit tests
+        run: ./gradlew test -PrunTests --no-daemon
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ccnr_pm
+          path: build/libs/*.jar
+
+      # 发版产物用 -all.jar（内嵌 SQLite 驱动）；普通 jar 在 db.enabled=true 时会降级为文件存储。
+      - name: Attach jars to GitHub Release (tags only)
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=$(grep -E "^mod_version=" gradle.properties | cut -d= -f2)
+          gh release upload "${GITHUB_REF_NAME}" \
+            "build/libs/ccnr_pm-${VERSION}.jar" \
+            "build/libs/ccnr_pm-${VERSION}-all.jar" --clobber
