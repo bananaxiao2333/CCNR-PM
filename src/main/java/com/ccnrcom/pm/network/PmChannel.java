@@ -118,6 +118,31 @@ public final class PmChannel {
                 .decoder(PmPackets.AdminStateS2C::new)
                 .consumerMainThread(PmPackets.AdminStateS2C::handle)
                 .add();
+
+        // 对局（当局状态 / 当局事件流 / 对局管理）。**新增包只能追加在末尾**。
+        CHANNEL.messageBuilder(PmPackets.RequestMatchStateC2S.class, id++, NetworkDirection.PLAY_TO_SERVER)
+                .encoder(PmPackets.RequestMatchStateC2S::encode)
+                .decoder(PmPackets.RequestMatchStateC2S::new)
+                .consumerMainThread(PmPackets.RequestMatchStateC2S::handle)
+                .add();
+
+        CHANNEL.messageBuilder(PmPackets.MatchStateS2C.class, id++, NetworkDirection.PLAY_TO_CLIENT)
+                .encoder(PmPackets.MatchStateS2C::encode)
+                .decoder(PmPackets.MatchStateS2C::new)
+                .consumerMainThread(PmPackets.MatchStateS2C::handle)
+                .add();
+
+        CHANNEL.messageBuilder(PmPackets.MatchActionC2S.class, id++, NetworkDirection.PLAY_TO_SERVER)
+                .encoder(PmPackets.MatchActionC2S::encode)
+                .decoder(PmPackets.MatchActionC2S::new)
+                .consumerMainThread(PmPackets.MatchActionC2S::handle)
+                .add();
+
+        CHANNEL.messageBuilder(PmPackets.MatchResultS2C.class, id++, NetworkDirection.PLAY_TO_CLIENT)
+                .encoder(PmPackets.MatchResultS2C::encode)
+                .decoder(PmPackets.MatchResultS2C::new)
+                .consumerMainThread(PmPackets.MatchResultS2C::handle)
+                .add();
     }
 
     /** 服务端 → 指定玩家；无通道（客户端未装模组 / 版本不匹配）时静默跳过。 */

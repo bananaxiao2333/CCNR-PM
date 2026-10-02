@@ -467,6 +467,39 @@ public final class PmPackets {
     public static final String ACT_SPAWN_TP = "spawn_tp";
     public static final String ACT_OBSERVER = "observer";
 
+    // ------------------------------------------------------------------
+    // 对局管理动作 id（同样是字符串协议，两端共用这些常量）
+    // ------------------------------------------------------------------
+
+    /**
+     * 切到指定幕（{@code arg} = 幕 id）。
+     *
+     * <p><b>空 {@code arg} = 切下一幕</b>——这不是这里定的规则，而是 CCNR-RP 自己的
+     * {@code switchPhase("")} 语义（它的 {@code /rp phase set} 也是这么用的）。
+     * PM 侧只做透传，不另立一套「下一幕」的规则，否则对方改了切幕语义我们不会跟着改。
+     */
+    public static final String ACT_MATCH_PHASE = "match_phase";
+
+    /** 强制触发某个事件（{@code arg} = 事件 id）。 */
+    public static final String ACT_MATCH_EVENT_ON = "match_event_on";
+
+    /** 强制结束某个正在运行的事件（{@code arg} = 事件 id）。 */
+    public static final String ACT_MATCH_EVENT_OFF = "match_event_off";
+
+    /**
+     * 收束对局（{@code arg} 忽略）。
+     *
+     * <p>收束理由由**服务端常量**给出而不从这里传：CCNR-RP 把理由拼进上报载荷时用的是字符串拼接，
+     * 客户端自由文本里的一个引号就能让存进数据库的 JSON 非法（见 {@code PmServerHandlers.MATCH_END_REASON}）。
+     */
+    public static final String ACT_MATCH_END = "match_end";
+
+    /** 清空事件 = 重开一局（对方语义：换 match_id + 清上一局的事件流）。 */
+    public static final String ACT_MATCH_RESET = "match_reset";
+
+    /** 只播结束动画，不结算也不收束对局（与 {@link #ACT_MATCH_END} 刻意分开）。 */
+    public static final String ACT_MATCH_GAME_OVER = "match_game_over";
+
     /** 玩家动作参数（职业 id）长度上限。 */
     private static final int MAX_ARG = 64;
 
@@ -593,6 +626,130 @@ public final class PmPackets {
             net.minecraftforge.fml.DistExecutor.unsafeRunWhenOn(
                     net.minecraftforge.api.distmarker.Dist.CLIENT,
                     () -> () -> com.ccnrcom.pm.client.PmClientPacketHandler.onAdminState(msg.admin));
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 对局（当局状态 / 当局事件流 / 对局管理）
+    // ------------------------------------------------------------------
+
+    /**
+     * 请求一份对局快照（C2S，空载荷）。
+     *
+     * <p>由「对局 / 事件」页签发，**面板打开期间每秒一次**：倒计时与事件流是活数据，
+     * 而 CCNR-RP 的推送走的是它自己的通道（PM 不订阅对方的包），因此这里必须主动轮询。
+     * 面板关闭即停——不做常驻轮询，那是把「看一眼对局」变成一条持续流量。
+     */
+    public static final class RequestMatchStateC2S {
+        public RequestMatchStateC2S() {}
+
+        public RequestMatchStateC2S(FriendlyByteBuf buf) {}
+
+        public void encode(FriendlyByteBuf buf) {}
+
+        public static void handle(RequestMatchStateC2S msg, Supplier<NetworkEvent.Context> ctx) {
+            ServerPlayer player = ctx.get().getSender();
+            if (player == null) return;
+            PmServerHandlers.onRequestMatchState(player);
+        }
+    }
+
+    /**
+     * 对局快照（S2C）。
+     *
+     * <p>载荷是一整份 JSON（编解码只有 {@code MatchSnapshot} 一份实现）：它由**两块来源**拼成——
+     * CCNR-RP 的对局状态（原样内嵌）与 PM 补的幕表/事件表/事件流，用 JSON 才不必为「对方以后多给一个字段」
+     * 改动协议两端。上限与工单页共用 {@link #MAX_PAGE_JSON}。
+     *
+     * <p>{@code available=false}（对方没装 CCNR-RP）是一份**正常载荷**而不是错误：
+     * 界面据此显示「未安装 CCNR-RP」并禁用所有动作按钮，而不是永远停在「正在读取……」。
+     */
+    public static final class MatchStateS2C {
+        public final String json;
+
+        public MatchStateS2C(String json) {
+            this.json = json == null ? "{\"available\":false}" : json;
+        }
+
+        public MatchStateS2C(FriendlyByteBuf buf) {
+            this(buf.readUtf(MAX_PAGE_JSON));
+        }
+
+        public void encode(FriendlyByteBuf buf) {
+            buf.writeUtf(json, MAX_PAGE_JSON);
+        }
+
+        public static void handle(MatchStateS2C msg, Supplier<NetworkEvent.Context> ctx) {
+            net.minecraftforge.fml.DistExecutor.unsafeRunWhenOn(
+                    net.minecraftforge.api.distmarker.Dist.CLIENT,
+                    () -> () -> com.ccnrcom.pm.client.PmClientPacketHandler.onMatchState(msg.json));
+        }
+    }
+
+    /**
+     * 对局管理动作（C2S）：切幕 / 触发事件 / 结束事件 / 收束对局 / 重开一局 / 播结束动画。
+     *
+     * <p>只送「做什么、对哪个目标」。**能不能做、目标存不存在全部由服务端重新判定**——
+     * 这里的 {@code arg} 是客户端从快照里复制来的 id，属于**线索**而非授权：
+     * 服务端把动作映射到 CCNR-RP 的入口，由对方自己回绝不存在/不可用的目标。
+     */
+    public static final class MatchActionC2S {
+        public final String action;
+        public final String arg;
+
+        public MatchActionC2S(String action, String arg) {
+            this.action = action == null ? "" : action;
+            this.arg = arg == null ? "" : arg;
+        }
+
+        public MatchActionC2S(FriendlyByteBuf buf) {
+            this(buf.readUtf(MAX_ID), buf.readUtf(MAX_ARG));
+        }
+
+        public void encode(FriendlyByteBuf buf) {
+            buf.writeUtf(action, MAX_ID);
+            buf.writeUtf(arg, MAX_ARG);
+        }
+
+        public static void handle(MatchActionC2S msg, Supplier<NetworkEvent.Context> ctx) {
+            ServerPlayer player = ctx.get().getSender();
+            if (player == null) return;
+            PmServerHandlers.onMatchAction(player, msg.action, msg.arg);
+        }
+    }
+
+    /**
+     * 对局动作的结果（S2C）。
+     *
+     * <p><b>为什么不复用 {@link AdminResultS2C}</b>：那是**工单**动作的结果，客户端收到后写进工单页签的错误行。
+     * 两者共用一个包时，客户端只能靠「当前打开的是哪个页签」分流——管理员在对局页签下触发了一个失败的工单动作
+     * （或反之）时，提示就会落到看不见的地方。多一个协议号换来的是「提示一定出现在发起它的那个页签上」。
+     *
+     * <p>成功时也会紧跟一份新的 {@link MatchStateS2C}：两者分开是因为刷新失败不该让「操作成功」这个事实
+     * 看起来也失败了（与工单的 AdminResult/TicketList 同一理由）。
+     */
+    public static final class MatchResultS2C {
+        public final boolean ok;
+        public final String messageKey;
+
+        public MatchResultS2C(boolean ok, String messageKey) {
+            this.ok = ok;
+            this.messageKey = messageKey == null ? "" : messageKey;
+        }
+
+        public MatchResultS2C(FriendlyByteBuf buf) {
+            this(buf.readBoolean(), buf.readUtf(128));
+        }
+
+        public void encode(FriendlyByteBuf buf) {
+            buf.writeBoolean(ok);
+            buf.writeUtf(messageKey, 128);
+        }
+
+        public static void handle(MatchResultS2C msg, Supplier<NetworkEvent.Context> ctx) {
+            net.minecraftforge.fml.DistExecutor.unsafeRunWhenOn(
+                    net.minecraftforge.api.distmarker.Dist.CLIENT,
+                    () -> () -> com.ccnrcom.pm.client.PmClientPacketHandler.onMatchResult(msg.ok, msg.messageKey));
         }
     }
 }

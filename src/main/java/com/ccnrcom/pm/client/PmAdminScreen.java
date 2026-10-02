@@ -4,6 +4,8 @@
  */
 package com.ccnrcom.pm.client;
 
+import com.ccnrcom.pm.client.tab.PmEventsTab;
+import com.ccnrcom.pm.client.tab.PmMatchTab;
 import com.ccnrcom.pm.client.tab.PmTicketsTab;
 import com.ccnrcom.pm.client.ui.PmButton;
 import com.ccnrcom.pm.client.ui.PmScrollbar;
@@ -34,13 +36,28 @@ import net.minecraft.network.chat.Component;
  */
 public final class PmAdminScreen extends Screen {
 
+    private static final org.apache.logging.log4j.Logger LOGGER =
+            org.apache.logging.log4j.LogManager.getLogger("ccnr_pm");
+
     /** 页签注册表：以后加「玩家检索」「处置记录」等页签在此追加即可。 */
-    private static final List<String> TABS = List.of("tickets");
+    private static final List<String> TABS = List.of("tickets", "match", "events");
+
+    /** 对局快照的轮询周期（客户端 tick）。1 秒：够让倒计时与事件流看起来是活的，又不至于变成一条持续流量。 */
+    private static final int MATCH_POLL_TICKS = 20;
 
     private static final int MIN_W = 480;
     private static final int MIN_H = 260;
     private static final int TAB_W = 84;
     private static final int TAB_H = 18;
+
+    /**
+     * 需要**活数据**的页签 id。
+     *
+     * <p>轮询只在这些页签处于前台时进行：「对局 / 事件」的数据每秒都在变，而工单列表不是
+     * （它是低频管理操作，动作后由服务端回推）。给工单页签也挂上轮询只是白费流量，
+     * 还会让 `ClientTicketBoard.accept` 每秒触发一次界面重建。
+     */
+    private static final List<String> LIVE_TABS = List.of("match", "events");
 
     private static volatile PmAdminScreen open;
 
@@ -57,12 +74,22 @@ public final class PmAdminScreen extends Screen {
     /** 页签条命中区（与 {@link #TABS} 一一对应）。 */
     private final List<int[]> tabRects = new ArrayList<>();
 
+    /** 轮询计数（只在 {@link #tick()} 里推进；到 {@link #MATCH_POLL_TICKS} 就再要一份对局快照）。 */
+    private int matchPollCounter;
+
     public PmAdminScreen() {
         super(Component.translatable("ccnr_pm.gui.panel.title"));
         this.parent = Minecraft.getInstance().screen;
-        // 目前只有一个页签，但结构按多页签设计：加页签不用动外壳
         for (String id : TABS) {
-            if ("tickets".equals(id)) tabs.add(new PmTicketsTab(this));
+            switch (id) {
+                case "tickets" -> tabs.add(new PmTicketsTab(this));
+                case "match" -> tabs.add(new PmMatchTab());
+                case "events" -> tabs.add(new PmEventsTab());
+                    // fail-soft 而不是抛异常：页签条是按 tabs 的**实际内容**画的（不是按 TABS），
+                    // 因此少一个页签不会留下一个点了没反应的按钮，界面仍然自洽。
+                    // 「TABS 与实现不同步」这件事由 PmAdminTabsTest 在编译期拦下，这里只是最后一道兜底。
+                default -> LOGGER.error("[CCNR-PM] TABS 里的页签 {} 没有对应的实现类，已跳过", id);
+            }
         }
     }
 
@@ -134,6 +161,11 @@ public final class PmAdminScreen extends Screen {
         // 打开即向服务端要一份权威数据
         ClientTicketBoard.clearError();
         ClientTicketBoard.request("all", 1);
+        // 对局快照也一并取一次：不取的话，切到「对局」页签会先看到一秒的「正在读取……」。
+        // 错误行同样要清——那一行是固定占位的，留着上一次打开的失败原因会被误读成刚发生的
+        ClientMatchState.clearError();
+        ClientMatchState.request();
+        matchPollCounter = 0;
     }
 
     // ------------------------------------------------------------------
@@ -300,6 +332,13 @@ public final class PmAdminScreen extends Screen {
         super.tick();
         if (PmClientState.knownNonAdmin()) {
             onClose();
+            return;
+        }
+        // 「对局 / 事件」是活数据：面板开着且前台是它们时每秒要一份新快照。
+        // 不订阅 CCNR-RP 的推送包（那要依赖对方的协议细节），代价只是面板打开期间每秒一个空载请求。
+        if (LIVE_TABS.contains(tabs.get(activeTab).id()) && ++matchPollCounter >= MATCH_POLL_TICKS) {
+            matchPollCounter = 0;
+            ClientMatchState.request();
         }
     }
 

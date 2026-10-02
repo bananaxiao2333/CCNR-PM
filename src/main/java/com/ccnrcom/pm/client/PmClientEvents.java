@@ -101,6 +101,8 @@ public final class PmClientEvents {
     @SubscribeEvent
     public static void onClientDisconnect(net.minecraftforge.client.event.ClientPlayerNetworkEvent.LoggingOut event) {
         ClientTicketBoard.reset();
+        // 对局快照一并清空：不然切服后打对局页签会先闪一下上一个服务器的幕名与倒计时
+        ClientMatchState.reset();
         // 权限镜像一并复位：不把上一个服务器的管理权限带进下一个（回"未知"，等服务端重新下发）
         PmClientState.reset();
         com.ccnrcom.pm.client.hud.TicketNoticeOverlay.clear();

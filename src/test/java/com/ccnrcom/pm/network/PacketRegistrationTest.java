@@ -174,7 +174,7 @@ class PacketRegistrationTest {
     }
 
     @Test
-    @DisplayName("C2S 包只有 5 个，且都在服务端做了权限与参数重校验（服务端权威的边界）")
+    @DisplayName("C2S 包只有 7 个，且都在服务端做了权限与参数重校验（服务端权威的边界）")
     void clientToServerSurfaceIsSmallAndReviewed() {
         // 攻击面越小越好。这个数字变了就意味着新增了一条客户端能影响服务端的路径，
         // 必须同步更新 docs/02 §4 的权威链审计表，并在服务端重新校验。
@@ -182,6 +182,10 @@ class PacketRegistrationTest {
         // PlayerActionC2S 里的 targetUuid/targetName **不是身份字段**：身份永远只有连接
         // (ctx.getSender()) 里那一个；它们是「要对谁动手」的目标描述，服务端在自己的玩家列表里
         // 重新解析（解析不到就回绝），权限也在服务端重新判定（PmServerHandlers.canAdminTicket）。
+        //
+        // MatchActionC2S 里的 arg 同理：它是客户端从对局快照里复制的幕/事件 id，属于**线索**而非授权。
+        // 服务端把它映射到 CCNR-RP 的白名单入口（RpBridge.matchAction），由对方回绝不可用的目标；
+        // 且这条路径**不传递任何客户端自由文本**（收束理由用服务端常量，见 PmServerHandlers）。
         Set<String> c2s = new TreeSet<>();
         Matcher m = Pattern.compile("PmPackets\\.(\\w+)\\.class, id\\+\\+, NetworkDirection\\.PLAY_TO_SERVER")
                 .matcher(read("src/main/java/com/ccnrcom/pm/network/PmChannel.java"));
@@ -193,7 +197,9 @@ class PacketRegistrationTest {
                         "RequestTicketsC2S",
                         "TicketActionC2S",
                         "PlayerActionC2S",
-                        "RequestProfessionsC2S"),
+                        "RequestProfessionsC2S",
+                        "RequestMatchStateC2S",
+                        "MatchActionC2S"),
                 c2s,
                 "C2S 包集合变了：新增 C2S 包必须（1）在服务端重新鉴权与重校验参数；" + "（2）更新 docs/02 §4 的权威链审计表；（3）确认它不携带身份字段");
     }

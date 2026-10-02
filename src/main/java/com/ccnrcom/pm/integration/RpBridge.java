@@ -4,6 +4,8 @@
  */
 package com.ccnrcom.pm.integration;
 
+import com.ccnrcom.pm.util.JsonUtil;
+import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import java.lang.reflect.Array;
@@ -205,6 +207,260 @@ public final class RpBridge {
             LOGGER.warn("[CCNR-PM] 送回阴间（CCNR-RP 退场）失败: {}", t.toString());
             return false;
         }
+    }
+
+    // ------------------------------------------------------------------
+    // 对局（当局状态 / 当局事件流 / 对局管理）
+    // ------------------------------------------------------------------
+
+    /**
+     * 传给 {@link #matchAction} 的**对局管理入口名**（= CCNR-RP 自己的方法名）。
+     *
+     * <p>刻意用「对方的方法名」当参数，而不是在 {@code integration} 包里再定义一套自己的动作枚举：
+     * 多一层映射就多一处会漂移的地方，而网络协议里的动作 id 与对方的入口名之间的对应
+     * 放在 {@code PmServerHandlers} 一处（与鉴权写在一起，读起来才完整）。
+     */
+    public static final String RP_SWITCH_PHASE = "switchPhase";
+
+    public static final String RP_TRIGGER_EVENT = "triggerEvent";
+    public static final String RP_END_EVENT = "endEvent";
+    public static final String RP_END_MATCH = "end";
+    public static final String RP_GAME_OVER = "gameOver";
+    public static final String RP_CLEAR_EVENTS = "clearAll";
+
+    /**
+     * 当局事件流一次下发的最大行数（**取最新的 N 行**）。
+     *
+     * <p>对方的内存环形缓冲默认 200 行（{@code data.recentEvents}）。整份下发在网络包上限之内，
+     * 但面板一次也就显示十几行，因此这里按行数与单行长度各设一道闸：
+     * 载荷超出 {@code writeUtf} 上限的表现是「打开面板什么都不发生」，而那是最难定位的一类缺陷。
+     */
+    private static final int MATCH_LOG_LIMIT = 120;
+
+    /** 单行正文的长度上限（截断而不是丢弃——尾部通常是「原因」这类关键信息）。 */
+    private static final int MATCH_LOG_TEXT_LIMIT = 240;
+
+    /**
+     * 取一份**对局快照**（JSON 字符串；对方未装/未初始化时返回 {@code null}）。
+     *
+     * <h2>构成为什么是这四块</h2>
+     * <ul>
+     *   <li>{@code match}——对方的 {@code EventManager.matchStatePayload()} **原样嵌入**：
+     *       「现在第几幕 / 还剩多久 / 在跑哪些事件 / 什么模式」只有它有权威答案，
+     *       这里绝不再自己算一遍（算了就会在对方改规则时悄悄失真）；</li>
+     *   <li>{@code phases}——可切换的全部幕（对方只把**当前**幕放进 matchState，而管理需要整张表）；</li>
+     *   <li>{@code events}——全部事件定义 + 状态（同上，matchState 只给正在运行的）；</li>
+     *   <li>{@code log}——当局事件流（击杀/死亡/阶段推进/结算…），取自
+     *       {@code DataLink.recentEvents()}，与 {@code /rp data events} 是**同一份**，不另做拷贝。</li>
+     * </ul>
+     *
+     * <p>四块各自独立降级：某一块读不出来只让它为空，不让整份快照变成 null——
+     * 「阶段读到了、事件表没读到」比「什么都没有」对管理员有用得多。
+     */
+    public static String matchSnapshot() {
+        if (!available()) return null;
+        Object events;
+        try {
+            events = staticField("eventManager");
+        } catch (Throwable t) {
+            LOGGER.warn("[CCNR-PM] 读取 CCNR-RP 事件管理器失败（对局页签将不可用）: {}", t.toString());
+            return null;
+        }
+        // field 是 public static 非 final，初始化完成前可能是 null——那不是异常，只是还没就绪
+        if (events == null) return null;
+
+        JsonObject root = new JsonObject();
+        root.addProperty("available", true);
+        root.add("match", matchStateOf(events));
+        root.add("phases", phasesOf(events));
+        root.add("events", eventsOf(events));
+        root.add("log", logOf());
+        return root.toString();
+    }
+
+    /**
+     * 调用 CCNR-RP 的对局管理入口。
+     *
+     * <h2>为什么要白名单</h2>
+     * {@code rpMethod} 最终来自网络包。即使 {@code PmServerHandlers} 已经把动作 id 映射过一遍，
+     * 这里仍然只认这几个名字：反射调用任意方法等于把对方的整个公开面暴露给一个字符串参数，
+     * 而白名单的代价只是六行 {@code case}。
+     *
+     * <h2>为什么不在这里重新校验参数</h2>
+     * 「幕 id 存不存在」「事件现在能不能触发/结束」都是**对方的规则**（它自己会回绝并返回 false）。
+     * 在这里再判一次就是第二份校验，对方一改就漂移。这里只负责把答案如实带回：
+     * {@code false} 表示对方拒绝了，界面据此提示「没生效」。
+     *
+     * @param rpMethod 见 {@link #RP_SWITCH_PHASE} 等常量
+     * @param arg 字符串参数（幕 id / 事件 id / 收束理由）；{@code switchPhase} 的空串 = 切下一幕
+     * @return 是否真的生效
+     */
+    public static boolean matchAction(String rpMethod, String arg) {
+        if (!available()) return false;
+        String m = rpMethod == null ? "" : rpMethod;
+        String v = arg == null ? "" : arg;
+        try {
+            Object events = staticField("eventManager");
+            if (events == null) return false;
+            return switch (m) {
+                case RP_SWITCH_PHASE, RP_TRIGGER_EVENT, RP_END_EVENT, RP_END_MATCH -> Boolean.TRUE.equals(
+                        callString(events, m, v));
+                    // 这两个没有字符串入参：前者只播结束动画，后者=清空事件并重开一局
+                case RP_GAME_OVER -> {
+                    callString(events, m, null);
+                    yield true;
+                }
+                case RP_CLEAR_EVENTS -> callString(events, m, null) != null;
+                default -> {
+                    LOGGER.warn("[CCNR-PM] 未知的对局管理入口: {}", m);
+                    yield false;
+                }
+            };
+        } catch (Throwable t) {
+            LOGGER.warn("[CCNR-PM] 对局管理动作 {} 执行失败: {}", m, t.toString());
+            return false;
+        }
+    }
+
+    /** 取对方的对局状态载荷；读不到时给一个空对象（界面会显示为「空窗期」，不会炸）。 */
+    private static JsonObject matchStateOf(Object eventManager) {
+        try {
+            Object payload =
+                    eventManager.getClass().getMethod("matchStatePayload").invoke(eventManager);
+            if (payload instanceof JsonObject o) return o;
+        } catch (Throwable t) {
+            LOGGER.warn("[CCNR-PM] 读取 CCNR-RP 对局状态失败: {}", t.toString());
+        }
+        return new JsonObject();
+    }
+
+    /** 全部幕（对方 {@code clock().phases()}）。 */
+    private static JsonArray phasesOf(Object eventManager) {
+        JsonArray arr = new JsonArray();
+        try {
+            Object clock = eventManager.getClass().getMethod("clock").invoke(eventManager);
+            if (clock == null) return arr;
+            Object phases = clock.getClass().getMethod("phases").invoke(clock);
+            if (!(phases instanceof List<?> list)) return arr;
+            for (Object p : list) {
+                if (p == null) continue;
+                String id = stringOf(p, "id");
+                if (id.isBlank()) continue;
+                JsonObject o = new JsonObject();
+                o.addProperty("id", id);
+                o.addProperty("name", displayNameOf(p, id));
+                arr.add(o);
+            }
+        } catch (Throwable t) {
+            LOGGER.warn("[CCNR-PM] 读取 CCNR-RP 幕表失败（对局页签只显示当前幕）: {}", t.toString());
+        }
+        return arr;
+    }
+
+    /** 全部事件定义 + 状态（对方 {@code events()}）。 */
+    private static JsonArray eventsOf(Object eventManager) {
+        JsonArray arr = new JsonArray();
+        try {
+            Object defs = eventManager.getClass().getMethod("events").invoke(eventManager);
+            if (!(defs instanceof List<?> list)) return arr;
+            for (Object def : list) {
+                if (def == null) continue;
+                String id = stringOf(def, "id");
+                if (id.isBlank()) continue;
+                JsonObject o = new JsonObject();
+                o.addProperty("id", id);
+                o.addProperty("name", displayNameOf(def, id));
+                o.addProperty("state", enumNameOf(def, "state"));
+                o.addProperty("enabled", Boolean.TRUE.equals(callNoArg(def, "enabled")));
+                arr.add(o);
+            }
+        } catch (Throwable t) {
+            LOGGER.warn("[CCNR-PM] 读取 CCNR-RP 事件表失败（对局页签只显示运行中的事件）: {}", t.toString());
+        }
+        return arr;
+    }
+
+    /**
+     * 当局事件流（对方 {@code DataLink.recentEvents()}，只取最新的若干行）。
+     *
+     * <p>数据服务**不可达时这段照常有内容**：事件流是本地环形缓冲，可见性不依赖连通性
+     * （对方 docs/19 的明确设计）。因此「对局页签看得见击杀」与「连没连上数据服务」是两件事。
+     */
+    private static JsonArray logOf() {
+        JsonArray arr = new JsonArray();
+        try {
+            Object data = staticField("data");
+            if (data == null) return arr; // 数据服务未启用：没有事件流可看，不是错误
+            Object recent = data.getClass().getMethod("recentEvents").invoke(data);
+            if (!(recent instanceof List<?> list)) return arr;
+            int from = Math.max(0, list.size() - MATCH_LOG_LIMIT);
+            for (int i = from; i < list.size(); i++) {
+                Object raw = list.get(i);
+                if (!(raw instanceof JsonObject line)) continue;
+                JsonObject o = new JsonObject();
+                o.addProperty("at", JsonUtil.num(line, "at", 0L));
+                o.addProperty("kind", JsonUtil.str(line, "kind", ""));
+                o.addProperty("text", clip(JsonUtil.str(line, "text", ""), MATCH_LOG_TEXT_LIMIT));
+                arr.add(o);
+            }
+        } catch (Throwable t) {
+            LOGGER.warn("[CCNR-PM] 读取 CCNR-RP 事件流失败（事件页签将为空）: {}", t.toString());
+        }
+        return arr;
+    }
+
+    /** 超长截断（保留头部：事件摘要的信息量集中在前半段）。 */
+    private static String clip(String s, int max) {
+        if (s == null) return "";
+        return s.length() <= max ? s : s.substring(0, max) + "…";
+    }
+
+    /** 无参方法的字符串结果（{@code id()}）；失败/非字符串返回空串。 */
+    private static String stringOf(Object target, String method) {
+        Object v = callNoArg(target, method);
+        return v instanceof String s ? s : "";
+    }
+
+    /** 无参枚举方法的名字（{@code state()}）；对方哪天改成字符串也照常工作。 */
+    private static String enumNameOf(Object target, String method) {
+        Object v = callNoArg(target, method);
+        if (v instanceof Enum<?> e) return e.name();
+        return v instanceof String s ? s : "";
+    }
+
+    /**
+     * 展示名：走对方的 {@code DisplayInfo.nameOr(fallback)}。
+     *
+     * <p>用对方的方法而不是自己读 JSON 字段，是因为「没配名字时回退成什么」也属于对方的显示契约
+     * （它自己在 {@code displayNameOf} 里就是回退 id）。取不到就回退 id——
+     * 名字缺失不该让整行消失，id 本身就能用。
+     */
+    private static String displayNameOf(Object owner, String fallback) {
+        try {
+            Object display = callNoArg(owner, "display");
+            if (display == null) return fallback;
+            Object name = display.getClass().getMethod("nameOr", String.class).invoke(display, fallback);
+            if (name instanceof String s && !s.isBlank()) return s;
+        } catch (Throwable ignored) {
+            // 对方改了展示结构：回退 id 即可，这个名字取不到不是致命问题
+        }
+        return fallback;
+    }
+
+    /** 无参调用；任何失败返回 null（调用方各自决定回退值）。 */
+    private static Object callNoArg(Object target, String method) {
+        if (target == null) return null;
+        try {
+            return target.getClass().getMethod(method).invoke(target);
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /** 单字符串参数调用；{@code arg} 为 null 时走无参重载（{@code gameOver()} / {@code clearAll()}）。 */
+    private static Object callString(Object target, String method, String arg) throws Exception {
+        if (arg == null) return target.getClass().getMethod(method).invoke(target);
+        return target.getClass().getMethod(method, String.class).invoke(target, arg);
     }
 
     // ------------------------------------------------------------------

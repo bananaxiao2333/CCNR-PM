@@ -103,6 +103,86 @@ public final class PmServerHandlers {
     }
 
     // ------------------------------------------------------------------
+    // 对局（当局状态 / 当局事件流 / 对局管理）
+    // ------------------------------------------------------------------
+
+    /**
+     * 收束对局时写进上报的理由。
+     *
+     * <p><b>刻意是一个服务端常量，不接受客户端传入。</b> CCNR-RP 把理由拼进事件上报的
+     * JSON 载荷时用的是字符串拼接（{@code "{\"reason\":\"" + reason + "\"}"}），
+     * 因此一段来自客户端的自由文本只要带一个引号就能把存进数据库的载荷弄成非法 JSON。
+     * 面板上本来也没有理由输入框——留一个「能传任意字符串」的口子只有坏处。
+     */
+    private static final String MATCH_END_REASON = "pm";
+
+    /** 对局动作失败的提示键（成功时不用任何键）。 */
+    private static final String MATCH_ACTION_FAILED = "ccnr_pm.panel.err.match_action_failed";
+
+    /**
+     * 面板请求一份对局快照。
+     *
+     * <p><b>权限在这里重新判定</b>：与工单列表同理，能打开面板不代表有权读对局状态或下指令。
+     *
+     * <p>CCNR-RP 未安装时照样回一份 {@code available=false} 的**正常载荷**：
+     * 界面据此显示「未安装 CCNR-RP」并禁用动作按钮，而不是停在「正在读取……」。
+     */
+    public static void onRequestMatchState(ServerPlayer player) {
+        if (!PmPermissions.canAdminTicket(player)) {
+            denyAdmin(player);
+            return;
+        }
+        PmChannel.sendTo(player, new PmPackets.MatchStateS2C(RpBridge.matchSnapshot()));
+    }
+
+    /**
+     * 对局管理动作（切幕 / 触发事件 / 结束事件 / 收束对局 / 重开一局 / 播结束动画）。
+     *
+     * <h2>信任边界</h2>
+     * <ol>
+     *   <li>权限：{@code canAdminTicket} 重新判定（改造过的客户端发不动）；</li>
+     *   <li>动作：未知 id 明确回绝并提示，**不静默忽略**（否则「点了没反应」无从定位）；</li>
+     *   <li>目标：{@code arg} 只是从快照里复制的线索，**不在这里校验**——幕存不存在、
+     *       事件现在能不能触发，都是 CCNR-RP 自己的规则，由它的入口回绝并返回 false。
+     *       在这里再判一次就是第二份校验，对方一改就漂移；</li>
+     *   <li>动作 → 对方入口的映射是**白名单**（{@link RpBridge#matchAction}），
+     *       且不传递任何客户端自由文本（见 {@link #MATCH_END_REASON}）。</li>
+     * </ol>
+     *
+     * <p>动作后立刻回推一份新快照：客户端**从不自己改本地对局状态**，
+     * 否则「本地以为切幕了、服务端其实拒绝了」这类不一致就无从察觉。
+     */
+    public static void onMatchAction(ServerPlayer player, String action, String arg) {
+        if (!PmPermissions.canAdminTicket(player)) {
+            denyAdmin(player);
+            return;
+        }
+        if (!RpBridge.available()) {
+            PmChannel.sendTo(player, new PmPackets.MatchResultS2C(false, "ccnr_pm.panel.err.rp_absent"));
+            return;
+        }
+
+        String act = action == null ? "" : action;
+        String target = arg == null ? "" : arg;
+        // 幕的 target 为空 = 切下一幕（CCNR-RP 自己的 switchPhase("") 语义，PM 只透传）
+        boolean ok;
+        switch (act) {
+            case PmPackets.ACT_MATCH_PHASE -> ok = RpBridge.matchAction(RpBridge.RP_SWITCH_PHASE, target);
+            case PmPackets.ACT_MATCH_EVENT_ON -> ok = RpBridge.matchAction(RpBridge.RP_TRIGGER_EVENT, target);
+            case PmPackets.ACT_MATCH_EVENT_OFF -> ok = RpBridge.matchAction(RpBridge.RP_END_EVENT, target);
+            case PmPackets.ACT_MATCH_END -> ok = RpBridge.matchAction(RpBridge.RP_END_MATCH, MATCH_END_REASON);
+            case PmPackets.ACT_MATCH_RESET -> ok = RpBridge.matchAction(RpBridge.RP_CLEAR_EVENTS, null);
+            case PmPackets.ACT_MATCH_GAME_OVER -> ok = RpBridge.matchAction(RpBridge.RP_GAME_OVER, null);
+            default -> {
+                PmChannel.sendTo(player, new PmPackets.MatchResultS2C(false, "ccnr_pm.panel.err.unknown_action"));
+                return;
+            }
+        }
+        PmChannel.sendTo(player, new PmPackets.MatchResultS2C(ok, ok ? "" : MATCH_ACTION_FAILED));
+        onRequestMatchState(player);
+    }
+
+    // ------------------------------------------------------------------
     // 看板头像上的玩家动作
     // ------------------------------------------------------------------
 

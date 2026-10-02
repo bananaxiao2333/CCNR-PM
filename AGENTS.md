@@ -36,15 +36,20 @@ export GRADLE_USER_HOME=/Users/bananaxiao/Documents/MirageV/mod/CCNR-Com/.gradle
 
 - `com.ccnrcom.pm` 入口 `CCNRPMMod`；子包按系统划分（见 docs/00 §3）。
   **纯类（无 MC import）** 集中在 `ticket` / `data` / `client.ui`（`PmTextLayout`、`PmTextBuffer`、
-  `PmPopupLayout`）/ `client.hud`（`NoticeCardLayout`、`BoardAvatarLayout`）/ `integration.ProfessionRef`，可直接 JUnit 测。
+  `PmPopupLayout`）/ `client.hud`（`NoticeCardLayout`、`BoardAvatarLayout`）/ `integration`
+  （`ProfessionRef`、`MatchSnapshot`），可直接 JUnit 测。
 - **无外部模组依赖**：不引用 CCNR-RP / CCNR-Com 的任何类。与 CCNR-Com 的唯一耦合是
   在 `RegisterCommandsEvent` 里**后置覆盖**它的 `/a` 与 `/admin` 命令；
   与 CCNR-RP 的耦合一律**反射 + 降级**（`client.RpPanel`、`integration.RpBridge`）。
+  **不直连数据服务器（CCNR-Data）**：对局数据只能经 CCNR-RP 取，理由见 docs/05 §2。
 - 存储分层：serverconfig toml = 调参；`config/ccnr_pm/report_categories.json` = 管理员可编辑定义；
   `config/ccnr_pm/db.properties` = 数据库开关；`world/ccnr_pm/tickets.json` 或数据库 = 运行时工单。
-- 网络通道 `ccnr_pm:main`（SimpleChannel，version=1），12 个包（见 docs/00 §7）。
+- 网络通道 `ccnr_pm:main`（SimpleChannel，version=1），17 个包（见 docs/00 §7）。
   **注册顺序即协议编号，新增只能追加在末尾。** 动作 id 这类字符串协议两端共用 `PmPackets` 的常量。
 - 存储后端选择只看 `Database.usable()`（= 配置启用 **且** 真的连上），不要用 `enabled()`。
+- 管理面板是**页签式外壳**（`PmAdminScreen` + `PmTab` 实现）。新增页签要同时改三处：
+  `TABS` 注册表、构造器的 `case` 分支、语言键 `ccnr_pm.gui.panel.tab.<id>`——
+  `PmAdminTabsTest` 会把这三处钉在一起。
 
 ## 开发纪律（完整版见 docs/01）
 
@@ -112,11 +117,25 @@ export GRADLE_USER_HOME=/Users/bananaxiao/Documents/MirageV/mod/CCNR-Com/.gradle
 - **PM 面板刷人不播入场演出**：`forceDeploy` 带 `SKIP_CINEMATIC` + `NO_MUSIC`，
   对应「强制跳过开场黑屏 / 左下角电影 HUD / 场景动画」。这是**每次部署的 flag**，
   不是改对方配置——玩家自己/波次/招募的演出必须保持原样。
-- **管理面板新增页签**：在 `PmAdminScreen.TABS` 加 id + new 出 `PmTab` 实现 + 补
-  `ccnr_pm.gui.panel.tab.<id>` 语言键，外壳不用改。页签注册 widget 必须走
-  `addPanelWidget`（只有 Screen 能持有 widget 生命周期）。
-- **面板客户端不自己改列表**：动作成功后等服务端回推权威快照；
-  客户端自行把状态改成 claimed 会造成「本地以为办成了、服务端没办成」。
+- **管理面板新增页签**：在 `PmAdminScreen.TABS` 加 id + 在构造器里加 `case` 分支 + 补
+  `ccnr_pm.gui.panel.tab.<id>` 语言键，外壳不用改。三处不一致的症状是「页签按钮点了没内容」
+  与「按钮上显示原始键名」，都只有把面板打开才看得见 → `PmAdminTabsTest` 已把它做成静态门禁。
+  页签注册 widget 必须走 `addPanelWidget`（只有 Screen 能持有 widget 生命周期）。
+- **面板客户端不自己改列表/对局状态**：动作成功后等服务端回推权威快照；
+  客户端自行把状态改成 claimed（或自行把「当前幕」改成刚切的那一幕）会造成
+  「本地以为办成了、服务端没办成」。
+- **每秒刷新的数据不要让页签持有 widget**：`PmAdminScreen.refreshWidgets()` 是**全局**的
+  （`clearWidgets()` 后重建所有页签），而工单页签的备注框会因此丢焦点（症状：备注打到一半光标没了）。
+  对局/事件页签因此是纯手绘 + 命中测试，且 `ClientMatchState.accept` **刻意不调用**
+  `refreshIfOpen()`。新增活数据页签时照此办理。
+- **对局数据只能经 CCNR-RP 反射取，不要自己连 CCNR-Data**：自己连会拿到「已落盘的部分」，
+  与管理员眼前这一局不是同一批数据（队列未投递 / 上一局尾巴还在重放），
+  两个对不上的数字并排显示比只显示一个更糟。见 [docs/05](docs/05-对局对接.md) §2。
+- **对局动作的参数不在 PM 侧校验**：「幕 id 存不存在」「事件现在能不能触发」是对方的规则，
+  由对方回绝并返回 `false`。在 PM 再判一次就是第二份校验，对方一改就漂移。
+  但反射层有**白名单**（`RpBridge.matchAction` 只认六个入口），别退化成「按名字调用任意方法」。
+- **收束对局的理由必须是服务端常量**：CCNR-RP 把它拼进上报 JSON 时用的是字符串拼接，
+  客户端文本里的一个引号就能让落库的载荷非法。`MATCH_END_REASON` 不接受入参。
 - **通知卡片是 HUD 浮层不是 Screen**：`registerAboveAll` 注册，只在没有打开任何界面时绘制。
   头像贴图是 GPU 资源，卡片清空/离开世界时必须 `release`（对称清理）。
 - **改表结构必须同时补迁移阶梯**：`CREATE TABLE IF NOT EXISTS` 对**已存在**的表什么都不做，

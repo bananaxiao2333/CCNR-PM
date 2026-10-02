@@ -65,4 +65,21 @@ class TimeTextTest {
         long t = millisOf(2026, 9, 12, 18, 30, ZoneId.systemDefault());
         assertEquals("2026-09-12 18:30", TimeText.format(t, null));
     }
+
+    @Test
+    @DisplayName("事件流的 clock() 到秒：同一分钟内的连续击杀要能排出先后")
+    void clockKeepsSeconds() {
+        long t = millisOf(2026, 9, 12, 18, 30, SHANGHAI) + 7_000L;
+        assertEquals("18:30:07", TimeText.clock(t, SHANGHAI));
+        // 与 format 是两个不同的读数，不能互相替代：一个是给工单对日志用的，一个是给事件流的
+        assertEquals("2026-09-12 18:30", TimeText.format(t, SHANGHAI));
+    }
+
+    @Test
+    @DisplayName("clock() 的缺失值是等宽占位（列表不会因缺时间戳而错位）")
+    void clockMissingValueIsPadded() {
+        assertEquals("--:--:--", TimeText.clock(0L, SHANGHAI));
+        assertEquals("--:--:--", TimeText.clock(-1L, SHANGHAI));
+        assertEquals(TimeText.clock(0L, SHANGHAI).length(), "18:30:07".length());
+    }
 }

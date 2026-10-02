@@ -106,6 +106,22 @@ public final class PmTheme {
         };
     }
 
+    /**
+     * 对局事件状态色（按 CCNR-RP 的 {@code EventState} 枚举名）。
+     *
+     * <p>与 {@link #statusColor} 分开而不是塞进同一个 switch：两者是**不同的枚举**
+     * （{@code SCHEDULED/RUNNING/SETTLED} 与 {@code open/claimed/closed/rejected}），
+     * 合并的唯一后果是把一个域的取值喂给另一个域时静默命中 {@code default} 而不报警。
+     */
+    public static int eventStateColor(String state) {
+        if (state == null) return TEXT_DISABLED;
+        return switch (state) {
+            case "RUNNING" -> STATUS_CLAIMED; // 亮白：正在发生
+            case "SETTLED" -> STATUS_CLOSED; // 灰蓝：已收束
+            default -> TEXT_DISABLED; // SCHEDULED：待触发
+        };
+    }
+
     // ------------------------------------------------------------------
     // 文本
     // ------------------------------------------------------------------

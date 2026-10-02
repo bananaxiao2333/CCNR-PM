@@ -25,6 +25,12 @@ public final class TimeText {
     /** 显示格式（本地时区由调用方给的 ZoneId 决定）。 */
     private static final String PATTERN = "yyyy-MM-dd HH:mm";
 
+    /** 事件流的时钟格式（见 {@link #clock(long)} 说明为何不共用上面的格式）。 */
+    private static final String CLOCK_PATTERN = "HH:mm:ss";
+
+    /** 时间戳缺失时的占位，宽度刻意与 {@code HH:mm:ss} 一致（列表不会因缺时间而错位）。 */
+    private static final String NO_CLOCK = "--:--:--";
+
     private TimeText() {}
 
     /** 用系统默认时区格式化（客户端＝玩家时区，服务端＝服务端时区）。 */
@@ -44,5 +50,27 @@ public final class TimeText {
         if (epochMillis <= 0L) return "-";
         ZoneId z = zone == null ? ZoneId.systemDefault() : zone;
         return DateTimeFormatter.ofPattern(PATTERN, Locale.ROOT).withZone(z).format(Instant.ofEpochMilli(epochMillis));
+    }
+
+    /** 时钟格式 {@code HH:mm:ss}——**事件流**用它，而不是 {@link #format}。 */
+    public static String clock(long epochMillis) {
+        return clock(epochMillis, ZoneId.systemDefault());
+    }
+
+    /**
+     * 指定时区的时钟格式。
+     *
+     * <p>为什么事件流不复用 {@link #format}：一局对局里的击杀全都发生在同一天，
+     * {@code yyyy-MM-dd} 占掉一半宽度却提供零信息，挤掉的正是事件正文。
+     * 而「秒」在这里是必需的——同一分钟内的连续击杀要靠它排先后。
+     *
+     * @return {@code HH:mm:ss}；{@code <= 0}（缺失/未设置）返回 {@code "--:--:--"}
+     */
+    public static String clock(long epochMillis, ZoneId zone) {
+        if (epochMillis <= 0L) return NO_CLOCK;
+        ZoneId z = zone == null ? ZoneId.systemDefault() : zone;
+        return DateTimeFormatter.ofPattern(CLOCK_PATTERN, Locale.ROOT)
+                .withZone(z)
+                .format(Instant.ofEpochMilli(epochMillis));
     }
 }

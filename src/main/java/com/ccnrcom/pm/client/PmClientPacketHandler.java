@@ -84,4 +84,23 @@ public final class PmClientPacketHandler {
             screen.onProfessionList(available, com.ccnrcom.pm.integration.ProfessionRef.fromJson(json));
         }
     }
+
+    /**
+     * 服务端下发的一份对局快照：存进本地缓存。
+     *
+     * <p>不主动刷新界面：对局/事件页签每帧从缓存取值，新数据下一帧就画出来；
+     * 而重建 widget 会打断**别的**页签里正在输入的控件（见 {@link ClientMatchState} 的类注释）。
+     */
+    public static void onMatchState(String json) {
+        ClientMatchState.accept(json);
+    }
+
+    /** 对局动作结果：成功即清空错误并等服务端回推的权威快照；失败把错误键交给页签显示。 */
+    public static void onMatchResult(boolean ok, String messageKey) {
+        if (ok) {
+            ClientMatchState.clearError();
+        } else if (messageKey != null && !messageKey.isBlank()) {
+            ClientMatchState.setError(messageKey);
+        }
+    }
 }
