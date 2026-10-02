@@ -52,6 +52,8 @@ public class CCNRPMMod {
         MinecraftForge.EVENT_BUS.addListener(PmCommand::onRegisterCommands);
         MinecraftForge.EVENT_BUS.addListener(this::onServerAboutToStart);
         MinecraftForge.EVENT_BUS.addListener(this::onPlayerLoggedIn);
+        MinecraftForge.EVENT_BUS.addListener(this::onPlayerLoggedOut);
+        MinecraftForge.EVENT_BUS.addListener(this::onServerTick);
         MinecraftForge.EVENT_BUS.addListener(this::onServerStopping);
     }
 
@@ -105,7 +107,9 @@ public class CCNRPMMod {
         // 0.5) 下发管理权限状态：客户端凭它做"没权限就别打开管理界面"那道门。
         //      必须在下面「上线即推看板」之前——否则管理员可能在标志到达前就按 P 打开面板。
         //      这只是界面门；真正的边界是本模组每个动作都会重新判定 canAdminTicket。
-        com.ccnrcom.pm.network.PmChannel.sendTo(player, new com.ccnrcom.pm.network.PmPackets.AdminStateS2C(admin));
+        //      **走 AdminStateSync**而不是自己发包：那条路径同时记账「上次下发了什么」，
+        //      会话中途被授权/降权才能靠周期复查收敛（见 AdminStateSync 的类注释）。
+        com.ccnrcom.pm.permission.AdminStateSync.push(player);
 
         // 1) 上线即推看板：管理员一进来就要看到**当前已有的全部活跃工单**，
         //    而不是只能等新工单产生。这一步不能依赖头像是否抓完——卡片先出来，
@@ -133,8 +137,32 @@ public class CCNRPMMod {
                 }));
     }
 
+    /**
+     * 玩家退出：丢掉权限记账。
+     *
+     * <p>必须对称清理：不丢的话记账会随「历史上线过的玩家」无界增长，
+     * 而它是按 UUID 索引的（同名不同人、改名都各占一条）。
+     */
+    private void onPlayerLoggedOut(net.minecraftforge.event.entity.player.PlayerEvent.PlayerLoggedOutEvent event) {
+        if (!(event.getEntity() instanceof net.minecraft.server.level.ServerPlayer player)) return;
+        com.ccnrcom.pm.permission.AdminStateSync.forget(player.getUUID());
+    }
+
+    /**
+     * 服务端每 tick：复查管理权限是否需要补发。
+     *
+     * <p>这是「会话中途拿到权限后客户端依然打不开管理界面」那个缺陷的修复点，
+     * 完整来龙去脉见 {@code permission.AdminStateSync} 的类注释。
+     * 内部已节流到 1 秒一次，且**只在值变化时发包**，因此稳态零流量。
+     */
+    private void onServerTick(net.minecraftforge.event.TickEvent.ServerTickEvent event) {
+        if (event.phase != net.minecraftforge.event.TickEvent.Phase.END) return;
+        com.ccnrcom.pm.permission.AdminStateSync.onServerTick(event.getServer());
+    }
+
     /** 服务端停止：排空写队列并断开连接（对称清理）。 */
     private void onServerStopping(ServerStoppingEvent event) {
+        com.ccnrcom.pm.permission.AdminStateSync.shutdown();
         TicketService.shutdown();
         com.ccnrcom.pm.avatar.AvatarService.shutdown();
         com.ccnrcom.pm.player.KnownPlayers.shutdown();

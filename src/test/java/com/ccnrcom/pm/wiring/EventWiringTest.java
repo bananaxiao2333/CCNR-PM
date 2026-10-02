@@ -155,8 +155,54 @@ class EventWiringTest {
     void adminStateIsPushedOnLogin() {
         String mod = read(MOD);
         assertTrue(
-                mod.contains("AdminStateS2C"),
-                "CCNRPMMod 登录时没有下发 AdminStateS2C —— 客户端手里没有权限信息，" + "按 P 会恢复正常（无权限者也能打开管理界面）");
+                mod.contains("AdminStateSync.push("),
+                "CCNRPMMod 登录时没有下发权限状态 —— 客户端手里没有权限信息，" + "按 P 会恢复正常（无权限者也能打开管理界面）");
+    }
+
+    /**
+     * 「会话中途拿到权限后依旧打不开管理界面」那个缺陷的接线门禁。
+     *
+     * <p>根因不是界面画不出来，而是客户端手里的权限是**过期且自认为权威的**：
+     * 只在登录时下发一次 boolean，之后 {@code /op} 或权限插件改节点都无法让它收敛，
+     * 而客户端还会据此把服务端刚打开的面板立刻关掉。修法是服务端周期复查 +
+     * 只在值变化时补发（见 {@code permission.AdminStateSync}）。
+     *
+     * <p>本测试只断言**接线存在**（复查被挂上、补发走记账、退出与停服有对称清理），
+     * 收敛时长与真实权限插件的配合仍由实机验证。
+     */
+    @Test
+    @DisplayName("会话中途的权限变化必须能收敛（复查已挂上 + 只在变化时发 + 对称清理）")
+    void adminStateConvergesMidSession() {
+        String mod = read(MOD);
+        assertTrue(
+                mod.contains("AdminStateSync.onServerTick("),
+                "服务端 tick 里没有复查权限 —— 会话中途被 /op 或权限插件授权的玩家，" + "客户端标志永远停在「已确认的 false」，按 P 打不开管理界面（用户报过这个现象）");
+        assertTrue(mod.contains("AdminStateSync.forget("), "玩家退出必须丢掉权限记账，否则缓存随历史上线过的玩家无界增长");
+        assertTrue(mod.contains("AdminStateSync.shutdown()"), "服务端停止必须清空权限记账（对称清理）");
+
+        String sync = read("src/main/java/com/ccnrcom/pm/permission/AdminStateSync.java");
+        assertTrue(sync.contains("AdminStateS2C"), "复查命中后必须真的下发 AdminStateS2C");
+        assertTrue(
+                sync.contains("needsSend(") && sync.contains("markSent("),
+                "补发必须走「先问、再发、发成功才记账」：每次都发会变成每人每秒一个包，" + "而先记账再发会把「没发出去」记成「已下发」，那条记录永久堵死重试");
+        assertTrue(sync.contains("if (deliver(player, admin))"), "轮询路径必须只在发送成功后才记账——否则通道晚一点可用时就再也补不上了");
+    }
+
+    @Test
+    @DisplayName("服务端驱动打开的界面 = 权威证明：客户端必须顺手置 admin=true（否则面板会被自己关掉）")
+    void serverOpenedPanelTrustsTheServer() {
+        String packets = read("src/main/java/com/ccnrcom/pm/network/PmPackets.java");
+        assertTrue(
+                packets.contains("PmClientPacketHandler.onOpenAdminPanel"),
+                "OpenAdminPanelS2C 的 handle 必须走客户端处理器（它负责顺手刷新权限镜像）");
+
+        String handler = read("src/main/java/com/ccnrcom/pm/client/PmClientPacketHandler.java");
+        int at = handler.indexOf("onOpenAdminPanel()");
+        assertTrue(at >= 0, "PmClientPacketHandler 缺少 onOpenAdminPanel");
+        assertTrue(
+                handler.substring(at).contains("PmClientState.setAdmin(true)"),
+                "onOpenAdminPanel 里必须把权限镜像置为 true —— 服务端在发这个包之前已经判过 "
+                        + "canAdminTicket，不置的话「上线后才被 /op」的玩家会看到面板一闪就被 tick() 关掉");
     }
 
     @Test

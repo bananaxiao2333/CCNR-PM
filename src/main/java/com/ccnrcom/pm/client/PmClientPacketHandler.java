@@ -73,6 +73,24 @@ public final class PmClientPacketHandler {
     }
 
     /**
+     * 服务端要求打开管理面板（{@code /pm panel}）。
+     *
+     * <p><b>顺手把权限镜像置为 true</b>：服务端在发这个包之前**已经**用
+     * {@code canAdminTicket} 判过权限（{@code PmCommand.panel}），所以这一包本身就是
+     * 「他是管理员」的权威证明。不这么做的话会出现一个真实缺陷的窗口——
+     * 玩家上线后才被 {@code /op}：客户端手里还是「已确认的 false」，
+     * 面板刚被服务端打开就被 {@link PmAdminScreen#tick()} 依据那个过期标志关掉，
+     * 现象是「拿到权限了但界面一闪就没 / 根本打不开」。
+     *
+     * <p>它不是安全边界上的放宽：客户端标志只决定「界面画不画」，
+     * 数据与动作仍由服务端逐个重新判定。
+     */
+    public static void onOpenAdminPanel() {
+        PmClientState.setAdmin(true);
+        PmAdminScreen.openPanel();
+    }
+
+    /**
      * 服务端回答「有没有 CCNR-RP、有哪些角色」。
      *
      * <p>角色选择弹窗只对**当时正开着**的交互看板下发（看板已关闭就丢掉）：

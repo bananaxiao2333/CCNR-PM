@@ -133,6 +133,7 @@
   "ccnr_pm.events.empty": "本局还没有事件",
   "ccnr_pm.command.usage.panel": "/pm panel —— 打开工单管理面板",
   "ccnr_pm.command.no_permission": "你没有权限执行该操作",
+  "ccnr_pm.command.permission_syncing": "正在同步管理权限，请稍后重试",
   "key.ccnr_pm.admin_panel": "打开管理面板",
   "key.categories.ccnr_pm": "CCNR-PM",
   "ccnr_pm.board.title": "工单看板",

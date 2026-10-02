@@ -78,11 +78,18 @@ public final class PmClientEvents {
         }
     }
 
-    /** 无管理权限时的统一回绝：只提示，不开任何界面（判据单一入口，避免各处各写一份）。 */
+    /**
+     * 无管理权限时的统一回绝：只提示，不开任何界面（判据单一入口，避免各处各写一份）。
+     *
+     * <p>「**还没收到**服务端的权限答案」与「**已确认**不是管理员」必须给不同的提示：
+     * 前者只是登录后的一小段窗口（服务端在登录时下发权威答案，且 {@code AdminStateSync}
+     * 每秒复查一次），此时说「你没有权限」是在撒谎——管理员会以为是自己权限配错了，
+     * 而真正的做法只是等一下。判据取 {@link PmClientState#known()}，不另立一套。
+     */
     private static void denyNoPermission(Minecraft mc) {
-        if (mc.player != null) {
-            mc.player.displayClientMessage(Component.translatable("ccnr_pm.command.no_permission"), true);
-        }
+        if (mc.player == null) return;
+        String key = PmClientState.known() ? "ccnr_pm.command.no_permission" : "ccnr_pm.command.permission_syncing";
+        mc.player.displayClientMessage(Component.translatable(key), true);
     }
 
     /** P 键当前是否处于按下状态。 */

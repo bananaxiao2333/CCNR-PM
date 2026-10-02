@@ -30,7 +30,9 @@ export GRADLE_USER_HOME=/Users/bananaxiao/Documents/MirageV/mod/CCNR-Com/.gradle
   编号规则与 **CHANGELOG 标题写法均以 CCNR-RP 为准**（`## <版本>（<摘要>）`，全角括号、不带方括号）。
 - 交付一次改动 → 判断是「批次」还是「修订」→ bump → `CHANGELOG.md` 顶部补条目 → README「当前版本」同步。
 - `mods.toml` 用 `${file.jarVersion}` 注入，**不要**手写第二个版本号。
-- 门禁：`VersionConsistencyTest` 会拦住三处不同步；版本号**不参与任何逻辑判断**。
+- 门禁：`VersionConsistencyTest` 会拦住四处不同步——`gradle.properties` / CHANGELOG / README，
+  **以及 `docs/04` 自己引用的版本号**（规范文档最容易悄悄漂：0.13.1→0.14.0 那次三条门禁全绿，
+  而它还停在 0.13.0）。版本号**不参与任何逻辑判断**。
 
 ## Architecture
 
@@ -59,7 +61,9 @@ export GRADLE_USER_HOME=/Users/bananaxiao/Documents/MirageV/mod/CCNR-Com/.gradle
   否则指名回绝。判据刻意不是「必须在线」——人刚下线/改名恰恰最该能举报（见 docs/02 §4）。
 - **校验只有一份**：`ReportValidator` 被客户端与服务端共用，两边各写一份必然漂移。
 - **线程边界**：`ccnr-pm-db-writer` 线程只跑 JDBC，绝不触碰 Level/NBT/网络/渲染。
-- **对称清理**：`ServerStoppingEvent → TicketService.shutdown()` 排空写队列 + 断开连接。
+- **对称清理**：`ServerStoppingEvent` → `AdminStateSync.shutdown()`（清空权限记账）+
+  `TicketService.shutdown()`（排空写队列 + 断开连接）；`PlayerLoggedOutEvent` →
+  `AdminStateSync.forget(uuid)`（记账有界于在线人数）。
 - **界面**：颜色只取自 `PmTheme`（禁止裸 `0x` 色值）；同类构件只走共享入口；亮底必须用 `ACCENT_TEXT`；
   文案按像素逐字符断行；弹层打开时吞点击、Esc 只关弹层。
 - **输入控件的字符规则**：过滤/搜索文字（如关联玩家的过滤词）**只挡控制字符**，任何可见字符都收。
@@ -93,6 +97,13 @@ export GRADLE_USER_HOME=/Users/bananaxiao/Documents/MirageV/mod/CCNR-Com/.gradle
 - **权限判据必须与对方一致**：`canAdminChat` = `OP≥2` 或权限节点 `ccnrcom.admin.chat`。
   该节点通过 `PermissionAPI.getRegisteredNodes()` **按名字运行时解析**（Forge 没有按字符串查询的重载），
   否则用权限插件授权但没有 OP 的管理员会被误导向举报面板。
+- **客户端的权限镜像是「界面门」不是安全边界，而且必须会被刷新**：`PmClientState` 只决定界面开不开
+  （每个数据请求与动作包都在服务端重新判 `canAdminTicket`）。但镜像**必须能跟上会话中途的权限变化**——
+  只在登录时下发一次会造成「上线后被 /op 却依旧打不开管理界面」（用户报过，0.14.1 修）：
+  客户端停在**自认为权威**的 `false` 上，按 P 被本地回绝、`/pm panel` 打开的面板还会被 `tick()` 立刻关掉。
+  现在由 `permission.AdminStateSync` 每秒复查 + **只在值变化时**补发，
+  且**查 / 记分离**（`needsSend` / `markSent`）：发包失败就不能记账，否则那条记录永久堵死重试。
+  改这块前先读 docs/02 §2.5.1。
 - **头像必须在玩家在线时抓，且每个玩家登录都要抓**：皮肤 URL 只存在于在线 `ServerPlayer` 的
   `GameProfile.textures` 里，玩家一下线就**再也抓不到**。曾经为了省一次 HTTP 只抓管理员，
   结果管理员看板上的其他玩家全变默认皮肤（重启后尤其明显）。抓取回调完成后要把看板

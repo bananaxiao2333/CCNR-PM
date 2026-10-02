@@ -435,6 +435,11 @@ public final class PmPackets {
      * <p>为什么由服务端触发而不是客户端自己开：{@code /pm panel} 是服务端命令，
      * 只有服务端知道命令是否被授权通过。客户端收到这个包才开面板，
      * 因此「谁有权限」这个问题只有一个答案来源。
+     *
+     * <p>也正因为**服务端在发它之前已经用 {@code canAdminTicket} 判过权限**，
+     * 客户端收到它就可以把自己的权限镜像置为 true——不必等 {@code AdminStateSync}
+     * 那一秒的复查。这顺手关掉了一个真实缺陷的窗口：权限刚被授予、客户端的标志还是
+     * 「已确认的 false」时，面板会被 {@code PmAdminScreen.tick()} 立刻关掉。
      */
     public static final class OpenAdminPanelS2C {
         public OpenAdminPanelS2C() {}
@@ -446,7 +451,7 @@ public final class PmPackets {
         public static void handle(OpenAdminPanelS2C msg, Supplier<NetworkEvent.Context> ctx) {
             net.minecraftforge.fml.DistExecutor.unsafeRunWhenOn(
                     net.minecraftforge.api.distmarker.Dist.CLIENT,
-                    () -> () -> com.ccnrcom.pm.client.PmAdminScreen.openPanel());
+                    () -> () -> com.ccnrcom.pm.client.PmClientPacketHandler.onOpenAdminPanel());
         }
     }
 

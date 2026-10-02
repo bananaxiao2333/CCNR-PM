@@ -145,13 +145,25 @@ public final class PmChannel {
                 .add();
     }
 
-    /** 服务端 → 指定玩家；无通道（客户端未装模组 / 版本不匹配）时静默跳过。 */
-    public static void sendTo(ServerPlayer player, Object msg) {
-        if (player == null || player.connection == null) return;
+    /**
+     * 服务端 → 指定玩家。
+     *
+     * <p>无通道（客户端未装模组 / 版本不匹配 / 通道尚未协商完成）时**静默跳过**——
+     * 服务端功能照常，只是那个玩家看不到界面。
+     *
+     * <p><b>返回值是「这次发送真的发生了吗」，不是「对方收到了」</b>：网络层不保证送达，
+     * 这里只回答「有没有送进通道」。绝大多数调用点忽略它即可；需要它的是那些**必须送到、
+     * 否则状态就不同步**的下发（例如权限状态：漏一包的后果是「拿到权限却打不开管理界面」，
+     * 且客户端还会一直停在过期的判断上，见 {@code permission.AdminStateSync}）。
+     *
+     * @return 是否真的把包送进了通道
+     */
+    public static boolean sendTo(ServerPlayer player, Object msg) {
+        if (player == null || player.connection == null) return false;
         Connection connection = player.connection.connection;
-        if (connection != null && CHANNEL.isRemotePresent(connection)) {
-            CHANNEL.send(PacketDistributor.PLAYER.with(() -> player), msg);
-        }
+        if (connection == null || !CHANNEL.isRemotePresent(connection)) return false;
+        CHANNEL.send(PacketDistributor.PLAYER.with(() -> player), msg);
+        return true;
     }
 
     /** 客户端 → 服务端。 */

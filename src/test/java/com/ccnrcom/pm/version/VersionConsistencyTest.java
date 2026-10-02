@@ -147,4 +147,54 @@ class VersionConsistencyTest {
         }
         assertTrue(lines.size() > 20, "docs/04 内容过少，规范形同虚设");
     }
+
+    /**
+     * 规范文档里引用的**本项目**版本号必须与真源一致。
+     *
+     * <p>为什么单独一条：`docs/04` 是「版本号该写在哪」的规范，而它自己就有三处写着本项目当前版本
+     * （§2 的结论、§3 的同步表、§6 的仓库对照表）。0.13.1 → 0.14.0 那次就漏掉了它——
+     * 三条门禁（`gradle.properties` / CHANGELOG / README）全绿，而规范文档还停在 0.13.0，
+     * 于是下一个照规范办事的人会照着**错的版本号**去同步。这类「文档与真源悄悄分叉」的漂移
+     * 只有把文档也纳入断言才拦得住。
+     *
+     * <p>只校验**本仓库**的版本：§6 的对照表里还有 CCNR-RP / CCNR-Com 的版本，
+     * 它们本来就应该与我们的不同，一刀切成「所有版本号都等于真源」会把那条表判死。
+     */
+    @Test
+    @DisplayName("docs/04 里引用的本项目版本号与 mod_version 一致（规范文档最容易悄悄漂）")
+    void specDocumentVersionMatchesSource() {
+        Path root = projectRoot();
+        String expected = sourceVersion(root);
+        String body;
+        try {
+            body = Files.readString(root.resolve("docs/04-版本号规范.md"), StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            fail("读取 docs/04 失败: " + e);
+            return;
+        }
+
+        // ① 真源行的写法（§3 的同步表）：`mod_version=X`——其它仓库不会以这个形状出现，可安全全量校验
+        Matcher rule = Pattern.compile("mod_version=(\\d+\\.\\d+\\.\\d+)").matcher(body);
+        int seen = 0;
+        while (rule.find()) {
+            seen++;
+            String found = rule.group(1);
+            assertTrue(
+                    expected.equals(found),
+                    "docs/04 把真源写成了 mod_version=" + found + "，实际是 " + expected + "（docs/04 §3）");
+        }
+        assertTrue(seen > 0, "docs/04 里找不到 mod_version=…——§3 的同步表被删了？");
+
+        // ② §2 的结论行
+        String conclusion =
+                body.lines().filter(l -> l.contains("符合上表")).findFirst().orElse(null);
+        assertTrue(conclusion != null, "docs/04 §2 找不到「符合上表」那句结论");
+        assertTrue(conclusion.contains(expected), "docs/04 §2 的结论仍写着旧版本（应为 " + expected + "）：" + conclusion.trim());
+
+        // ③ §6 对照表里本仓库那一行（只认「（本仓库）」那一行，别把 CCNR-RP / CCNR-Com 一起判了）
+        Matcher row = Pattern.compile("\\*\\*CCNR-PM\\*\\*（本仓库）\\s*\\|\\s*`(\\d+\\.\\d+\\.\\d+)`")
+                .matcher(body);
+        assertTrue(row.find(), "docs/04 §6 找不到带「（本仓库）」的 CCNR-PM 版本行");
+        assertTrue(expected.equals(row.group(1)), "docs/04 §6 的 CCNR-PM 版本(" + row.group(1) + ") 没同步到 " + expected);
+    }
 }

@@ -133,6 +133,7 @@
   "ccnr_pm.events.empty": "No events this round",
   "ccnr_pm.command.usage.panel": "/pm panel - open the ticket management panel",
   "ccnr_pm.command.no_permission": "You do not have permission to do that",
+  "ccnr_pm.command.permission_syncing": "Syncing management permission, please try again in a moment",
   "key.ccnr_pm.admin_panel": "Open management panel",
   "key.categories.ccnr_pm": "CCNR-PM",
   "ccnr_pm.board.title": "Ticket board",
